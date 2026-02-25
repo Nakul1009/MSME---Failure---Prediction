@@ -1,0 +1,17 @@
+# MSME Failure Predictor — Python Dependencies
+
+# Web framework
+flask==3.0.3
+flask-cors==4.0.1
+
+# Data & ML
+pandas==2.2.2
+numpy==1.26.4
+scikit-learn==1.5.0
+imbalanced-learn==0.12.3
+
+# Environment & utilities
+python-dotenv==1.0.1
+
+# Google Gemini AI
+google-generativeai==0.7.2

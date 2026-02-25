@@ -1,5 +1,23 @@
-node_modules/
+# Python
 __pycache__/
+*.py[cod]
+*.pyo
+
+# Environment
 .env
-*.pkl
 env/
+venv/
+.venv/
+
+# ML model artifacts (large binary files)
+*.pkl
+
+# Logs
+*.log
+
+# Node
+node_modules/
+
+# OS
+.DS_Store
+Thumbs.db

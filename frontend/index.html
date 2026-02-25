@@ -31,6 +31,10 @@
             <button class="nav-btn" data-tab="dashboard">
                 <span>📈</span> Comparison Dashboard
             </button>
+            <button class="nav-btn" data-tab="chat" id="chatNavBtn">
+                <span>💬</span> Chat Advisor
+                <span class="chat-new-badge hidden" id="chatNewBadge">●</span>
+            </button>
         </div>
     </nav>
 
@@ -220,6 +224,77 @@
                     <h2>AI-Powered Improvement Suggestions</h2>
                     <div class="suggestions-container" id="suggestionsContainer">
                         <!-- Suggestions will be inserted here -->
+                    </div>
+                </section>
+            </div>
+
+            <!-- Chat Advisor Tab -->
+            <div id="chat" class="tab-content">
+                <section class="chat-section">
+                    <div class="chat-header-bar">
+                        <div>
+                            <h2>💬 Chat Advisor</h2>
+                            <p class="chat-subtitle">Ask me anything about your financial health</p>
+                        </div>
+                        <button class="btn btn-secondary" id="clearChatBtn" onclick="clearChat()">🗑 Clear Chat</button>
+                    </div>
+
+                    <!-- Context Banner -->
+                    <div class="chat-context-banner hidden" id="chatContextBanner">
+                        <span class="context-icon">📊</span>
+                        <div class="context-info">
+                            <strong id="contextCompanyName">Company</strong>
+                            <span id="contextRiskBadge" class="context-risk-badge">LOW RISK</span>
+                        </div>
+                        <span class="context-tag">Context Active</span>
+                    </div>
+
+                    <!-- No context hint -->
+                    <div class="chat-no-context" id="chatNoContext">
+                        <span>💡</span> Run a prediction first to get <strong>context-aware</strong> personalized advice. I can still answer general questions!
+                    </div>
+
+                    <!-- Message Feed -->
+                    <div class="chat-messages" id="chatMessages">
+                        <!-- Welcome message -->
+                        <div class="message message-bot">
+                            <div class="message-avatar">🤖</div>
+                            <div class="message-bubble">
+                                <p>Hello! I'm your MSME Financial Advisor. I can help you understand financial ratios, interpret your risk score, and suggest actionable improvements.</p>
+                                <p style="margin-top:0.5rem; opacity:0.8; font-size:0.85rem;">Run a prediction above, then ask me anything!</p>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Typing Indicator -->
+                    <div class="typing-indicator hidden" id="typingIndicator">
+                        <div class="message-avatar">🤖</div>
+                        <div class="typing-dots">
+                            <span></span><span></span><span></span>
+                        </div>
+                    </div>
+
+                    <!-- Quick Action Chips -->
+                    <div class="quick-chips" id="quickChips">
+                        <button class="quick-chip" onclick="handleQuickChip('Explain my bankruptcy risk score')">📊 Explain my risk score</button>
+                        <button class="quick-chip" onclick="handleQuickChip('How can I improve my liquidity?')">💧 Improve liquidity</button>
+                        <button class="quick-chip" onclick="handleQuickChip('How can I reduce my debt?')">🔐 Reduce debt</button>
+                        <button class="quick-chip" onclick="handleQuickChip('How can I improve profitability?')">💰 Boost profitability</button>
+                        <button class="quick-chip" onclick="handleQuickChip('What is the most urgent issue I need to fix?')">🚨 Top priority fix</button>
+                    </div>
+
+                    <!-- Input Row -->
+                    <div class="chat-input-row">
+                        <input
+                            type="text"
+                            id="chatInput"
+                            class="chat-input"
+                            placeholder="Ask about your financial health..."
+                            autocomplete="off"
+                        />
+                        <button class="btn btn-primary chat-send-btn" id="chatSendBtn" onclick="sendChatMessage()">
+                            <span>Send</span> ➤
+                        </button>
                     </div>
                 </section>
             </div>

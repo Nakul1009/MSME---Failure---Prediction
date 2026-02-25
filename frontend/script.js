@@ -9,8 +9,9 @@ let companiesData = [];
 // INITIALIZATION
 // ============================================================================
 
-document.addEventListener('DOMContentLoaded', function() {
+document.addEventListener('DOMContentLoaded', function () {
     setupEventListeners();
+    setupChatEventListeners();
     console.log('Dashboard initialized');
 });
 
@@ -136,17 +137,17 @@ function makePrediction(features, companyName) {
         },
         body: JSON.stringify({ features })
     })
-    .then(response => {
-        if (!response.ok) {
-            throw new Error(`API Error: ${response.status}`);
-        }
-        return response.json();
-    })
-    .then(data => {
-        data.companyName = companyName;
-        data.features = features;
-        return data;
-    });
+        .then(response => {
+            if (!response.ok) {
+                throw new Error(`API Error: ${response.status}`);
+            }
+            return response.json();
+        })
+        .then(data => {
+            data.companyName = companyName;
+            data.features = features;
+            return data;
+        });
 }
 
 // ============================================================================
@@ -161,12 +162,15 @@ function handlePredictionResult(result, companyName) {
         ...result
     });
 
+    // Update chat context so the advisor knows about this prediction
+    updateChatContext(result, companyName);
+
     // Display results
     displayPredictionResults(result);
     displaySuggestions(result.suggestions);
 
     // Show success message
-    showNotification('✓ Prediction completed successfully!', 'success');
+    showNotification('✓ Prediction completed! 💬 Chat advisor updated with your data.', 'success');
 
     // Scroll to results
     setTimeout(() => {
@@ -227,7 +231,7 @@ function displayPredictionResults(result) {
 
 function displaySuggestions(suggestions) {
     const container = document.getElementById('suggestionsContainer');
-    
+
     if (!suggestions || !suggestions.advice) {
         container.innerHTML = '<p>No suggestions available.</p>';
         document.getElementById('suggestionsSection').classList.remove('hidden');
@@ -300,7 +304,7 @@ function updateStats() {
 
 function updateCompaniesTable() {
     const tbody = document.getElementById('tableBody');
-    
+
     if (companiesData.length === 0) {
         tbody.innerHTML = '<tr class="empty-row"><td colspan="5">No companies analyzed yet.</td></tr>';
         return;
@@ -310,10 +314,10 @@ function updateCompaniesTable() {
         const riskScore = (company.bankruptcy_risk_score * 100).toFixed(1);
         const healthScore = (company.safe_score * 100).toFixed(1);
         const riskLevel = getRiskLabel(company.bankruptcy_risk_score);
-        
+
         let riskClass = 'risk-score-low';
         let statusClass = 'status-badge-low';
-        
+
         if (company.bankruptcy_risk_score > 0.5) {
             riskClass = 'risk-score-high';
             statusClass = 'status-badge-high';
@@ -374,7 +378,7 @@ function showNotification(message, type = 'success') {
 
     messageElement.textContent = message;
     notification.className = 'notification';
-    
+
     if (type === 'error') {
         notification.classList.add('error');
     } else if (type === 'warning') {
@@ -433,3 +437,197 @@ function loadSampleData() {
 
 // Add load sample button functionality (can be triggered from console)
 console.log('To load sample data, run: loadSampleData()');
+
+// ============================================================================
+// CONVERSATIONAL CHAT ADVISOR
+// ============================================================================
+
+let chatContext = null;       // Stores the latest prediction result + features
+let chatHistory = [];         // Multi-turn conversation history for Gemini
+let isChatSending = false;    // Prevent double-send
+
+/**
+ * Wires up keyboard listener for the chat input (Enter to send).
+ * Called once at DOMContentLoaded.
+ */
+function setupChatEventListeners() {
+    const chatInput = document.getElementById('chatInput');
+    if (chatInput) {
+        chatInput.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter' && !e.shiftKey) {
+                e.preventDefault();
+                sendChatMessage();
+            }
+        });
+    }
+}
+
+/**
+ * Populate chatContext with the latest prediction result so the chatbot
+ * can give contextual answers. Called inside handlePredictionResult().
+ */
+function updateChatContext(result, companyName) {
+    chatContext = {
+        companyName: companyName,
+        features: result.features,
+        bankruptcy_risk_score: result.bankruptcy_risk_score,
+        safe_score: result.safe_score,
+        risk_level: result.risk_level,
+        status: result.status,
+        prediction: result.prediction
+    };
+
+    // Update the context banner in the Chat tab
+    const banner = document.getElementById('chatContextBanner');
+    const noCtx = document.getElementById('chatNoContext');
+    const nameEl = document.getElementById('contextCompanyName');
+    const badge = document.getElementById('contextRiskBadge');
+
+    if (banner && nameEl && badge) {
+        nameEl.textContent = companyName;
+        badge.textContent = result.risk_level + ' — ' + (result.bankruptcy_risk_score * 100).toFixed(1) + '%';
+
+        badge.className = 'context-risk-badge';
+        if (result.bankruptcy_risk_score > 0.5) badge.classList.add('high');
+        else if (result.bankruptcy_risk_score > 0.3) badge.classList.add('medium');
+        else badge.classList.add('low');
+
+        banner.classList.remove('hidden');
+        if (noCtx) noCtx.style.display = 'none';
+    }
+
+    // Flash the Chat nav badge to nudge user to the chat tab
+    const chatBadge = document.getElementById('chatNewBadge');
+    if (chatBadge) chatBadge.classList.remove('hidden');
+}
+
+/**
+ * Send the current chat input to /api/chat, render bubbles and typing indicator.
+ */
+async function sendChatMessage() {
+    if (isChatSending) return;
+
+    const input = document.getElementById('chatInput');
+    const message = (input ? input.value : '').trim();
+    if (!message) return;
+
+    isChatSending = true;
+    input.value = '';
+    input.disabled = true;
+    document.getElementById('chatSendBtn').disabled = true;
+
+    // Render user bubble
+    appendMessage('user', message);
+
+    // Add to history
+    chatHistory.push({ role: 'user', text: message });
+
+    // Show typing indicator
+    showTypingIndicator(true);
+
+    try {
+        const resp = await fetch(`${API_BASE_URL}/chat`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                message: message,
+                history: chatHistory.slice(-20),   // last 20 turns
+                context: chatContext || null
+            })
+        });
+
+        if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+        const data = await resp.json();
+        const reply = data.reply || 'Sorry, I could not generate a response.';
+
+        showTypingIndicator(false);
+        appendMessage('bot', reply);
+
+        // Add bot reply to history
+        chatHistory.push({ role: 'bot', text: reply });
+
+    } catch (err) {
+        console.error('Chat error:', err);
+        showTypingIndicator(false);
+        appendMessage('bot', '⚠️ Could not reach the advisor. Please ensure the backend is running and try again.');
+    } finally {
+        isChatSending = false;
+        input.disabled = false;
+        document.getElementById('chatSendBtn').disabled = false;
+        input.focus();
+    }
+}
+
+/**
+ * Append a message bubble to the chat feed.
+ * @param {'user'|'bot'} role
+ * @param {string}       text
+ */
+function appendMessage(role, text) {
+    const feed = document.getElementById('chatMessages');
+    if (!feed) return;
+
+    const wrapper = document.createElement('div');
+    wrapper.className = `message message-${role}`;
+
+    const avatar = document.createElement('div');
+    avatar.className = 'message-avatar';
+    avatar.textContent = role === 'user' ? '👤' : '🤖';
+
+    const bubble = document.createElement('div');
+    bubble.className = 'message-bubble';
+    bubble.textContent = text;   // textContent protects against XSS
+
+    wrapper.appendChild(avatar);
+    wrapper.appendChild(bubble);
+    feed.appendChild(wrapper);
+
+    // Auto-scroll to bottom
+    feed.scrollTop = feed.scrollHeight;
+}
+
+/**
+ * Show or hide the animated typing indicator.
+ */
+function showTypingIndicator(show) {
+    const indicator = document.getElementById('typingIndicator');
+    const feed = document.getElementById('chatMessages');
+    if (!indicator || !feed) return;
+
+    if (show) {
+        // Move indicator just below the feed so it's always visible
+        feed.parentNode.insertBefore(indicator, feed.nextSibling);
+        indicator.classList.remove('hidden');
+    } else {
+        indicator.classList.add('hidden');
+    }
+
+    if (feed) feed.scrollTop = feed.scrollHeight;
+}
+
+/**
+ * Handle a quick-action chip click: inject text and send.
+ */
+function handleQuickChip(text) {
+    const input = document.getElementById('chatInput');
+    if (input) input.value = text;
+    sendChatMessage();
+}
+
+/**
+ * Clear the chat history and reset the message feed to the welcome message.
+ */
+function clearChat() {
+    chatHistory = [];
+    const feed = document.getElementById('chatMessages');
+    if (feed) {
+        feed.innerHTML = `
+            <div class="message message-bot">
+                <div class="message-avatar">🤖</div>
+                <div class="message-bubble">
+                    <p>Chat cleared! Ask me anything about MSME financial health, your risk score, or improvement strategies.</p>
+                </div>
+            </div>`;
+    }
+}
+
