@@ -13,5 +13,5 @@ imbalanced-learn==0.12.3
 # Environment & utilities
 python-dotenv==1.0.1
 
-# Google Gemini AI
-google-generativeai==0.7.2
+# Hugging Face Inference API
+huggingface-hub>=0.25.0
