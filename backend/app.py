@@ -11,18 +11,18 @@ _REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if _REPO_ROOT not in sys.path:
     sys.path.insert(0, _REPO_ROOT)
 
-from flask import Flask, request, jsonify
+from flask import Flask, request, jsonify, send_from_directory
 from flask_cors import CORS
 import json
 from datetime import datetime
 import logging
 from dotenv import load_dotenv
-import google.generativeai as genai
+from huggingface_hub import InferenceClient
 
 from backend.model_config import (
     ModelLoader, validate_features, get_feature_health_score,
-    get_feature_interpretation, FEATURE_MAP, FEATURE_CATEGORIES,
-    HEALTHY_RANGES
+    get_feature_interpretation, normalize_features,
+    FEATURE_MAP, FEATURE_CATEGORIES, HEALTHY_RANGES
 )
 
 # ============================================================================
@@ -34,12 +34,16 @@ load_dotenv(os.path.join(_REPO_ROOT, '.env'))
 app = Flask(__name__)
 CORS(app)
 
+# Use UTF-8 encoding on StreamHandler to avoid UnicodeEncodeError on Windows
+_stream_handler = logging.StreamHandler()
+_stream_handler.stream = open(sys.stdout.fileno(), mode='w', encoding='utf-8', closefd=False)
+
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     handlers=[
-        logging.FileHandler(os.path.join(_REPO_ROOT, 'backend.log')),
-        logging.StreamHandler()
+        logging.FileHandler(os.path.join(_REPO_ROOT, 'backend.log'), encoding='utf-8'),
+        _stream_handler
     ]
 )
 logger = logging.getLogger(__name__)
@@ -56,19 +60,20 @@ except Exception as e:
     logger.error(f"Error initializing model: {str(e)}")
     model_loader = None
 
-# Configure Gemini API
-GEMINI_API_KEY = os.getenv('GEMINI_API_KEY')
-if GEMINI_API_KEY:
+# Configure Hugging Face Inference API
+HF_API_KEY = os.getenv('HF_API_KEY')
+hf_client = None
+HF_MODEL = 'Qwen/Qwen3-Next-80B-A3B-Instruct'
+
+if HF_API_KEY:
     try:
-        genai.configure(api_key=GEMINI_API_KEY)
-        model_gemini = genai.GenerativeModel('gemini-1.5-pro')
-        logger.info("✓ Gemini API configured")
+        hf_client = InferenceClient(api_key=HF_API_KEY)
+        logger.info("HuggingFace Inference API configured (model: %s)", HF_MODEL)
     except Exception as e:
-        logger.warning(f"Gemini API configuration failed: {str(e)}")
-        model_gemini = None
+        logger.warning(f"HuggingFace API configuration failed: {str(e)}")
+        hf_client = None
 else:
-    logger.info("Gemini API key not provided. Using fallback suggestions.")
-    model_gemini = None
+    logger.info("HF_API_KEY not provided. Using fallback suggestions.")
 
 # ============================================================================
 # AI ADVISOR
@@ -93,8 +98,8 @@ class ChatAdvisor:
     @staticmethod
     def get_reply(message, history, context):
         """Get a chat reply, using Gemini if available"""
-        if model_gemini:
-            return ChatAdvisor._get_gemini_reply(message, history, context)
+        if hf_client:
+            return ChatAdvisor._get_ai_reply(message, history, context)
         return ChatAdvisor._get_fallback_reply(message, context)
 
     @staticmethod
@@ -132,30 +137,37 @@ Use this data to give personalized, specific, actionable advice. Reference exact
 Keep responses concise (2-4 sentences or a short bullet list). Be encouraging but honest."""
 
     @staticmethod
-    def _get_gemini_reply(message, history, context):
-        """Get reply from Gemini with conversation history"""
+    def _get_ai_reply(message, history, context):
+        """Get reply from Hugging Face Inference API with conversation history"""
         try:
             system_prompt = ChatAdvisor._build_system_prompt(context)
 
-            # Build conversation turns
-            conversation_parts = [system_prompt, "\n\n"]
-            for turn in history[-10:]:  # Keep last 10 turns for context window
+            # Build messages in OpenAI-style chat format
+            messages = [{"role": "system", "content": system_prompt}]
+            for turn in history[-10:]:
                 role = turn.get('role', 'user')
                 text = turn.get('text', '')
-                prefix = 'User' if role == 'user' else 'Advisor'
-                conversation_parts.append(f"{prefix}: {text}\n")
-            conversation_parts.append(f"User: {message}\nAdvisor:")
+                messages.append({
+                    "role": "user" if role == 'user' else "assistant",
+                    "content": text
+                })
+            messages.append({"role": "user", "content": message})
 
-            full_prompt = ''.join(conversation_parts)
-            response = model_gemini.generate_content(full_prompt)
+            response = hf_client.chat.completions.create(
+                model=HF_MODEL,
+                messages=messages,
+                max_tokens=512,
+                temperature=0.7
+            )
 
+            reply_text = response.choices[0].message.content.strip()
             return {
-                'reply': response.text.strip(),
-                'source': 'gemini',
+                'reply': reply_text,
+                'source': 'huggingface',
                 'timestamp': datetime.now().isoformat()
             }
         except Exception as e:
-            logger.warning(f"Gemini chat error: {str(e)}")
+            logger.warning(f"HuggingFace chat error: {str(e)}")
             return ChatAdvisor._get_fallback_reply(message, context)
 
     @staticmethod
@@ -188,17 +200,16 @@ class AIAdvisor:
     @staticmethod
     def get_suggestions(features, risk_score, is_bankrupt):
         """Get improvement suggestions"""
-        if model_gemini:
-            return AIAdvisor._get_gemini_suggestions(features, risk_score, is_bankrupt)
+        if hf_client:
+            return AIAdvisor._get_ai_suggestions(features, risk_score, is_bankrupt)
         else:
             return AIAdvisor._get_rule_based_suggestions(features, is_bankrupt)
 
     @staticmethod
-    def _get_gemini_suggestions(features, risk_score, is_bankrupt):
-        """Get suggestions from Gemini API"""
+    def _get_ai_suggestions(features, risk_score, is_bankrupt):
+        """Get suggestions from Hugging Face Inference API"""
         try:
-            prompt = f"""
-You are a financial advisor specializing in MSME (Micro, Small & Medium Enterprises) financial health.
+            prompt = f"""You are a financial advisor specializing in MSME (Micro, Small & Medium Enterprises) financial health.
 
 Based on the following financial metrics, provide 3-5 specific, actionable recommendations to improve the company's financial health and reduce bankruptcy risk.
 
@@ -217,14 +228,19 @@ Based on the following financial metrics, provide 3-5 specific, actionable recom
 
 Keep the response concise and actionable."""
 
-            response = model_gemini.generate_content(prompt)
+            response = hf_client.chat.completions.create(
+                model=HF_MODEL,
+                messages=[{"role": "user", "content": prompt}],
+                max_tokens=1024,
+                temperature=0.7
+            )
             return {
-                'advice': response.text,
-                'source': 'gemini',
+                'advice': response.choices[0].message.content,
+                'source': 'huggingface',
                 'generated_at': datetime.now().isoformat()
             }
         except Exception as e:
-            logger.warning(f"Gemini API error: {str(e)}")
+            logger.warning(f"HuggingFace API error: {str(e)}")
             return AIAdvisor._get_rule_based_suggestions(features, is_bankrupt)
 
     @staticmethod
@@ -351,7 +367,9 @@ def predict():
                 'details': errors
             }), 400
 
-        prediction, risk_score, safe_score = model_loader.predict(features)
+        # Normalize real-world values to the dataset scale the model expects
+        normalized = normalize_features(features)
+        prediction, risk_score, safe_score = model_loader.predict(normalized)
 
         is_bankrupt = prediction == 1
         suggestions = AIAdvisor.get_suggestions(features, risk_score, is_bankrupt)
@@ -401,7 +419,9 @@ def batch_predict():
                     })
                     continue
 
-                prediction, risk_score, safe_score = model_loader.predict(features)
+                # Normalize real-world values to the dataset scale
+                normalized = normalize_features(features)
+                prediction, risk_score, safe_score = model_loader.predict(normalized)
 
                 results.append({
                     'name': company.get('name', 'Unknown'),
@@ -515,6 +535,11 @@ def chat():
         if not message:
             return jsonify({'error': 'Empty message'}), 400
 
+        # Limit message length to prevent quota abuse
+        MAX_CHAT_LENGTH = 2000
+        if len(message) > MAX_CHAT_LENGTH:
+            return jsonify({'error': f'Message too long. Maximum {MAX_CHAT_LENGTH} characters.'}), 400
+
         history = data.get('history', [])
         context = data.get('context', None)
 
@@ -544,3 +569,32 @@ def not_found(e):
 def internal_error(e):
     logger.error(f"Internal server error: {str(e)}")
     return jsonify({'error': 'Internal server error'}), 500
+
+
+# ============================================================================
+# SERVE FRONTEND
+# ============================================================================
+
+_FRONTEND_DIR = os.path.join(_REPO_ROOT, 'frontend')
+
+@app.route('/')
+def serve_index():
+    """Serve the frontend index.html at root"""
+    return send_from_directory(_FRONTEND_DIR, 'index.html')
+
+@app.route('/styles.css')
+def serve_css():
+    return send_from_directory(_FRONTEND_DIR, 'styles.css')
+
+@app.route('/script.js')
+def serve_js():
+    return send_from_directory(_FRONTEND_DIR, 'script.js')
+
+
+# ============================================================================
+# MAIN ENTRY POINT
+# ============================================================================
+
+if __name__ == '__main__':
+    debug_mode = os.getenv('FLASK_DEBUG', 'false').lower() in ('true', '1', 'yes')
+    app.run(debug=debug_mode, host='0.0.0.0', port=5000)

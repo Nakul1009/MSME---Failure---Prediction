@@ -254,14 +254,17 @@ function displaySuggestions(suggestions) {
         `).join('');
         container.innerHTML = html;
     } else {
-        // Text format (Gemini API)
-        const text = suggestions.advice;
-        const html = `
+        // Text format (AI-generated) — render full text with basic formatting
+        const formatted = simpleMarkdown(suggestions.advice);
+        const sourceTag = suggestions.source === 'huggingface'
+            ? '<span style="font-size:0.78rem;background:#dcfce7;color:#15803d;padding:2px 8px;border-radius:999px;font-weight:600;margin-left:0.5rem;">AI Generated</span>'
+            : '<span style="font-size:0.78rem;background:#fef3c7;color:#92400e;padding:2px 8px;border-radius:999px;font-weight:600;margin-left:0.5rem;">Rule-based</span>';
+        container.innerHTML = `
             <div class="suggestion-card">
-                <p>${text.substring(0, 500)}${text.length > 500 ? '...' : ''}</p>
+                <h4>AI Advisor Recommendations ${sourceTag}</h4>
+                <div style="white-space:pre-wrap;line-height:1.7;">${formatted}</div>
             </div>
         `;
-        container.innerHTML = html;
     }
 
     document.getElementById('suggestionsSection').classList.remove('hidden');
@@ -399,26 +402,26 @@ function showNotification(message, type = 'success') {
 
 function loadSampleData() {
     const sampleCompany = {
-        name: 'Sample Company',
+        name: 'Distressed Manufacturing Co.',
         features: {
-            'Cash flow rate': 0.5,
-            'Cash Flow to Sales': 0.3,
-            'Cash Flow to Liability': 0.25,
-            'Current Ratio': 1.8,
-            'Quick Ratio': 1.2,
-            'Cash/Current Liability': 0.4,
-            'Debt ratio %': 45,
-            'Liability to Equity': 1.2,
-            'Interest Coverage Ratio': 3.5,
-            'DFL': 1.5,
-            'ROA': 0.08,
-            'Operating Gross Margin': 0.35,
-            'Gross Profit to Sales': 0.4,
-            'Net Income to Total Assets': 0.06,
-            'Revenue Growth Rate': 0.10,
-            'Accounts Receivable Turnover': 4,
-            'Inventory Turnover Rate': 3,
-            'Average Collection Days': 45,
+            'Cash flow rate': 0.05,
+            'Cash Flow to Sales': -0.10,
+            'Cash Flow to Liability': 0.08,
+            'Current Ratio': 0.6,
+            'Quick Ratio': 0.3,
+            'Cash/Current Liability': 0.1,
+            'Debt ratio %': 82,
+            'Liability to Equity': 4.5,
+            'Interest Coverage Ratio': 0.8,
+            'DFL': 6.0,
+            'ROA': -0.05,
+            'Operating Gross Margin': 0.05,
+            'Gross Profit to Sales': 0.06,
+            'Net Income to Total Assets': -0.08,
+            'Revenue Growth Rate': -0.20,
+            'Accounts Receivable Turnover': 2.0,
+            'Inventory Turnover Rate': 1.5,
+            'Average Collection Days': 120,
         }
     };
 
@@ -432,7 +435,7 @@ function loadSampleData() {
 
     document.getElementById('companyName').value = sampleCompany.name;
 
-    showNotification('Sample data loaded. Click "Predict & Get Advice" to test.', 'success');
+    showNotification('⚠️ Sample data loaded', 'warning');
 }
 
 // Add load sample button functionality (can be triggered from console)
@@ -576,7 +579,13 @@ function appendMessage(role, text) {
 
     const bubble = document.createElement('div');
     bubble.className = 'message-bubble';
-    bubble.textContent = text;   // textContent protects against XSS
+
+    if (role === 'bot') {
+        // Render basic markdown for bot responses (bold, lists, line breaks)
+        bubble.innerHTML = simpleMarkdown(text);
+    } else {
+        bubble.textContent = text;   // textContent protects against XSS for user input
+    }
 
     wrapper.appendChild(avatar);
     wrapper.appendChild(bubble);
@@ -631,3 +640,32 @@ function clearChat() {
     }
 }
 
+/**
+ * Simple markdown renderer for bot/AI text.
+ * Converts **bold**, bullet lists, and line breaks to HTML.
+ */
+function simpleMarkdown(text) {
+    // Escape HTML entities to prevent XSS
+    let html = text
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;');
+
+    // Bold: **text** or __text__
+    html = html.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
+    html = html.replace(/__(.+?)__/g, '<strong>$1</strong>');
+
+    // Numbered lists: "1. item" at start of line
+    html = html.replace(/^(\d+)\.\s+(.+)$/gm, '<li>$2</li>');
+
+    // Bullet lists: "- item" or "• item" at start of line
+    html = html.replace(/^[-•]\s+(.+)$/gm, '<li>$1</li>');
+
+    // Wrap consecutive <li> in <ul>
+    html = html.replace(/(<li>.*?<\/li>\n?)+/gs, (match) => `<ul>${match}</ul>`);
+
+    // Line breaks
+    html = html.replace(/\n/g, '<br>');
+
+    return html;
+}

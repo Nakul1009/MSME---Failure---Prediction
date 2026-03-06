@@ -65,6 +65,27 @@ HEALTHY_RANGES = {
 }
 
 # ============================================================================
+# INPUT NORMALIZATION
+# ============================================================================
+# The model is trained on real-world-scale features (denormalized from the
+# original dataset).  User-entered values can be passed directly — no
+# remapping is needed.  This function is kept as a pass-through for
+# backward compatibility with callers in app.py.
+
+
+def normalize_features(features: Dict[str, float]) -> Dict[str, float]:
+    """
+    Accept user-entered real-world financial ratios and return them as-is.
+
+    The model was trained on denormalized (real-world) data, so no
+    rescaling is required.  The RobustScaler inside ModelLoader.predict()
+    handles the final scaling.
+    """
+    return dict(features)
+
+
+
+# ============================================================================
 # MODEL PATHS  (relative to repo root, not to backend/)
 # ============================================================================
 
@@ -74,6 +95,7 @@ MODEL_DIR = os.path.join(_REPO_ROOT, 'model', 'models')
 MODEL_PATH = os.path.join(MODEL_DIR, 'stacking_gbm.pkl')
 SCALER_PATH = os.path.join(MODEL_DIR, 'robust_scaler.pkl')
 METADATA_PATH = os.path.join(MODEL_DIR, 'model_metadata.pkl')
+
 
 # ============================================================================
 # MODEL LOADER CLASS
@@ -140,7 +162,7 @@ class ModelLoader:
         Make prediction on new data
 
         Args:
-            features: Dictionary with feature names and values
+            features: Dictionary with feature names and values (in dataset scale)
 
         Returns:
             Tuple of (prediction, bankruptcy_risk_score, safe_score)
@@ -161,9 +183,12 @@ class ModelLoader:
         else:
             X_scaled = X
 
-        # Predict
-        prediction = self.model.predict(X_scaled)[0]
+        # Predict using calibrated threshold from training
         probabilities = self.model.predict_proba(X_scaled)[0]
+        threshold = 0.5
+        if self.metadata and 'best_threshold' in self.metadata:
+            threshold = self.metadata['best_threshold']
+        prediction = int(probabilities[1] >= threshold)
 
         return prediction, probabilities[1], probabilities[0]
 
